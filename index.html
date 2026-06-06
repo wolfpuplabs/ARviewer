@@ -1,47 +1,623 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebAR Viewer</title>
-    <link rel="stylesheet" href="styles.css">
-    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-    <!-- Supabase JS client (UMD build -> exposes window.supabase) -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WebAR Viewer — Spatial Console</title>
+
+<!-- model-viewer web component -->
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Space+Mono:wght@400;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+  /* ============================================================
+     DESIGN TOKENS
+     ============================================================ */
+  :root {
+    --bg:        #0a0b0e;
+    --bg-deep:   #060709;
+    --elev:      #101319;
+    --panel:     rgba(255, 255, 255, 0.025);
+    --panel-2:   rgba(255, 255, 255, 0.04);
+    --line:      rgba(255, 255, 255, 0.09);
+    --line-soft: rgba(255, 255, 255, 0.05);
+
+    --text:      #f3f1ec;
+    --dim:       #8a9099;
+    --faint:     #565c64;
+
+    --signal:    #ff5d2e;        /* HUD / selection orange */
+    --signal-hi: #ff7a52;
+    --grid:      rgba(120, 170, 200, 0.10);
+
+    --radius:    14px;
+    --ease:      cubic-bezier(.22, 1, .36, 1);
+
+    --font-display: 'Syne', sans-serif;
+    --font-mono:    'Space Mono', monospace;
+    --font-body:    'Hanken Grotesk', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font-body);
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    /* atmosphere: vignette + faint dot grid */
+    background-image:
+      radial-gradient(120% 90% at 70% 0%, rgba(255, 93, 46, 0.07), transparent 55%),
+      radial-gradient(100% 80% at 0% 100%, rgba(80, 130, 170, 0.06), transparent 60%),
+      radial-gradient(circle at center, rgba(255,255,255,0.022) 1px, transparent 1px);
+    background-size: auto, auto, 26px 26px;
+    background-attachment: fixed;
+  }
+
+  ::selection { background: var(--signal); color: #0a0b0e; }
+
+  /* ============================================================
+     SHELL / LAYOUT
+     ============================================================ */
+  .shell {
+    min-height: 100vh;
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: clamp(18px, 3vw, 34px);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(16px, 2.2vw, 26px);
+  }
+
+  /* ---------- Header ---------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+    opacity: 0;
+    animation: rise .8s var(--ease) .05s forwards;
+  }
+
+  .brand { display: flex; align-items: center; gap: 14px; }
+
+  .brand-mark {
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    display: grid; place-items: center;
+    background: linear-gradient(150deg, #16191f, #0c0e12);
+    border: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 8px 24px rgba(0,0,0,.5);
+    position: relative;
+    overflow: hidden;
+  }
+  .brand-mark::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 20%, rgba(255,93,46,.5), transparent 60%);
+    opacity: .6;
+  }
+  /* little wireframe cube glyph */
+  .cube { width: 22px; height: 22px; position: relative; z-index: 1; }
+  .cube svg { display: block; }
+
+  .brand-text h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 19px;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  .brand-text .sub {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-top: 5px;
+  }
+
+  .status-cluster {
+    display: flex; align-items: center; gap: 22px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    color: var(--dim);
+  }
+  .stat { display: flex; flex-direction: column; gap: 3px; text-align: right; }
+  .stat .k { color: var(--faint); font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; }
+  .stat .v { color: var(--text); }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--signal);
+    box-shadow: 0 0 0 4px rgba(255,93,46,.16);
+    display: inline-block; margin-right: 7px;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+
+  /* ============================================================
+     MAIN GRID — viewport + control rail
+     ============================================================ */
+  .stage-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: clamp(16px, 2vw, 24px);
+    align-items: stretch;
+  }
+
+  /* ---------- Viewport ---------- */
+  .viewport {
+    position: relative;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    background:
+      radial-gradient(80% 60% at 50% 38%, rgba(255,255,255,.035), transparent 70%),
+      linear-gradient(180deg, #0d1015, #08090c);
+    overflow: hidden;
+    min-height: 440px;
+    opacity: 0;
+    animation: rise .9s var(--ease) .18s forwards;
+  }
+
+  /* perspective grid floor */
+  .floor {
+    position: absolute;
+    left: 50%; bottom: -2%;
+    width: 200%; height: 60%;
+    transform: translateX(-50%) perspective(520px) rotateX(64deg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(60% 70% at 50% 30%, #000 30%, transparent 75%);
+            mask-image: radial-gradient(60% 70% at 50% 30%, #000 30%, transparent 75%);
+    pointer-events: none;
+  }
+  /* contact glow under model */
+  .platform-glow {
+    position: absolute;
+    left: 50%; bottom: 16%;
+    width: 280px; height: 70px;
+    transform: translateX(-50%);
+    background: radial-gradient(closest-side, rgba(255,93,46,.22), transparent);
+    filter: blur(8px);
+    pointer-events: none;
+  }
+
+  model-viewer {
+    width: 100%; height: 100%;
+    position: relative; z-index: 2;
+    --poster-color: transparent;
+    background: transparent;
+  }
+
+  /* viewfinder corner brackets */
+  .bracket {
+    position: absolute; width: 26px; height: 26px;
+    border-color: var(--signal); border-style: solid; border-width: 0;
+    z-index: 4; pointer-events: none; opacity: .85;
+  }
+  .bracket.tl { top: 16px; left: 16px; border-top-width: 2px; border-left-width: 2px; border-top-left-radius: 4px; }
+  .bracket.tr { top: 16px; right: 16px; border-top-width: 2px; border-right-width: 2px; border-top-right-radius: 4px; }
+  .bracket.bl { bottom: 16px; left: 16px; border-bottom-width: 2px; border-left-width: 2px; border-bottom-left-radius: 4px; }
+  .bracket.br { bottom: 16px; right: 16px; border-bottom-width: 2px; border-right-width: 2px; border-bottom-right-radius: 4px; }
+
+  /* readout overlay (top-left of viewport) */
+  .vp-readout {
+    position: absolute; top: 26px; left: 30px; z-index: 5;
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em;
+    color: var(--dim); line-height: 1.7; pointer-events: none;
+  }
+  .vp-readout b { color: var(--signal); font-weight: 700; }
+
+  /* empty state */
+  .empty-state {
+    position: absolute; inset: 0; z-index: 3;
+    display: grid; place-items: center; text-align: center;
+    transition: opacity .4s var(--ease);
+  }
+  .empty-state.hidden { opacity: 0; pointer-events: none; }
+  .empty-state .ring {
+    width: 84px; height: 84px; border-radius: 50%;
+    border: 1px dashed var(--line); display: grid; place-items: center;
+    margin: 0 auto 18px; color: var(--faint);
+    animation: spin 22s linear infinite;
+  }
+  .empty-state p { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; color: var(--faint); text-transform: uppercase; }
+
+  /* custom AR button */
+  .ar-btn {
+    position: absolute; z-index: 6;
+    bottom: 22px; left: 50%; transform: translateX(-50%);
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 11px 20px; border-radius: 100px;
+    background: var(--signal); color: #0a0b0e;
+    font-family: var(--font-mono); font-weight: 700; font-size: 12px;
+    letter-spacing: .1em; text-transform: uppercase;
+    border: none; cursor: pointer;
+    box-shadow: 0 10px 30px rgba(255,93,46,.4);
+    transition: transform .25s var(--ease), box-shadow .25s var(--ease);
+  }
+  .ar-btn:hover { transform: translateX(-50%) translateY(-2px); box-shadow: 0 16px 38px rgba(255,93,46,.55); }
+  .ar-btn:active { transform: translateX(-50%) translateY(0); }
+
+  /* ============================================================
+     CONTROL RAIL
+     ============================================================ */
+  .rail {
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .rail > * { opacity: 0; animation: rise .8s var(--ease) forwards; }
+  .rail > *:nth-child(1) { animation-delay: .30s; }
+  .rail > *:nth-child(2) { animation-delay: .40s; }
+  .rail > *:nth-child(3) { animation-delay: .50s; }
+  .rail > *:nth-child(4) { animation-delay: .60s; }
+
+  .rail-label {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .24em;
+    text-transform: uppercase; color: var(--faint);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .rail-label::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+
+  /* upload slot */
+  .slot {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    padding: 18px;
+    cursor: pointer;
+    display: block;
+    transition: border-color .25s var(--ease), background .25s var(--ease), transform .25s var(--ease);
+    overflow: hidden;
+  }
+  .slot::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--signal); transform: scaleY(0); transform-origin: bottom;
+    transition: transform .3s var(--ease);
+  }
+  .slot:hover { border-color: rgba(255,93,46,.4); background: var(--panel-2); transform: translateY(-2px); }
+  .slot:hover::before { transform: scaleY(1); }
+  .slot.loaded { border-color: rgba(255,93,46,.55); }
+  .slot.loaded::before { transform: scaleY(1); }
+  .slot input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  .slot-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .slot-fmt {
+    font-family: var(--font-display); font-weight: 700; font-size: 15px; letter-spacing: -.01em;
+  }
+  .slot-tag {
+    font-family: var(--font-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px; color: var(--dim);
+    border: 1px solid var(--line); white-space: nowrap;
+  }
+  .slot-desc { font-size: 12.5px; color: var(--dim); line-height: 1.5; }
+  .slot-file {
+    margin-top: 12px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--signal); display: flex; align-items: center; gap: 7px;
+    word-break: break-all; min-height: 16px;
+  }
+  .slot-file svg { flex: none; }
+  .slot-file:empty { display: none; }
+
+  /* share / primary action */
+  .share-btn {
+    margin-top: 4px;
+    width: 100%;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--signal);
+    background: linear-gradient(180deg, var(--signal), #e8431a);
+    color: #0a0b0e;
+    font-family: var(--font-display); font-weight: 800; font-size: 14px;
+    letter-spacing: .02em; cursor: pointer;
+    box-shadow: 0 12px 30px rgba(255,93,46,.32);
+    transition: transform .22s var(--ease), box-shadow .22s var(--ease), filter .22s var(--ease);
+  }
+  .share-btn:hover { transform: translateY(-2px); box-shadow: 0 18px 40px rgba(255,93,46,.45); filter: brightness(1.05); }
+  .share-btn:active { transform: translateY(0); }
+
+  /* spec panel */
+  .specs {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); padding: 16px 18px;
+    font-family: var(--font-mono); font-size: 11.5px;
+  }
+  .specs .row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 0; border-bottom: 1px dashed var(--line-soft);
+  }
+  .specs .row:last-child { border-bottom: none; }
+  .specs .row .k { color: var(--faint); letter-spacing: .1em; text-transform: uppercase; font-size: 10px; }
+  .specs .row .v { color: var(--text); }
+  .specs .row .v.ok { color: var(--signal); }
+
+  /* toast */
+  .toast {
+    position: fixed; left: 50%; bottom: 30px; transform: translate(-50%, 20px);
+    background: var(--elev); border: 1px solid var(--signal);
+    color: var(--text); padding: 13px 22px; border-radius: 100px;
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: .05em;
+    box-shadow: 0 16px 50px rgba(0,0,0,.6); z-index: 50;
+    opacity: 0; pointer-events: none; transition: all .35s var(--ease);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast b { color: var(--signal); }
+
+  footer {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .14em;
+    color: var(--faint); text-transform: uppercase;
+    display: flex; justify-content: space-between; align-items: center;
+    padding-top: 16px; border-top: 1px solid var(--line);
+    opacity: 0; animation: rise .8s var(--ease) .7s forwards;
+  }
+
+  /* ============================================================
+     ANIMATIONS
+     ============================================================ */
+  @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 4px rgba(255,93,46,.16); } 50% { box-shadow: 0 0 0 7px rgba(255,93,46,.04); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ============================================================
+     RESPONSIVE
+     ============================================================ */
+  @media (max-width: 880px) {
+    .stage-grid { grid-template-columns: 1fr; }
+    .viewport { min-height: 56vh; }
+    .status-cluster .stat:first-child { display: none; }
+  }
+  @media (max-width: 520px) {
+    .status-cluster { gap: 14px; }
+    .brand-text .sub { display: none; }
+    footer { flex-direction: column; gap: 6px; text-align: center; }
+  }
+</style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <img src="logo.png" alt="Logo" class="logo">
-            <h1>WebAR Viewer</h1>
-        </header>
-        <main>
-            <model-viewer id="model" alt="A 3D model" ar ar-modes="scene-viewer webxr quick-look" camera-controls auto-rotate autoplay></model-viewer>
+  <div class="shell">
 
-            <div class="upload-container">
-                <label for="glbUpload">Upload GLB Model:</label>
-                <input type="file" id="glbUpload" accept=".glb, .gltf"/>
-            </div>
-            <div class="upload-container">
-                <label for="usdzUpload">Upload USDZ Model:</label>
-                <input type="file" id="usdzUpload" accept=".usdz"/>
-            </div>
+    <!-- ===== HEADER ===== -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <span class="cube">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff7a52" stroke-width="1.4" stroke-linejoin="round">
+              <path d="M12 2 L21 7 V17 L12 22 L3 17 V7 Z"/>
+              <path d="M12 2 V12 L21 7 M12 12 L3 7 M12 12 V22"/>
+            </svg>
+          </span>
+        </div>
+        <div class="brand-text">
+          <h1>WebAR Viewer</h1>
+          <div class="sub">Spatial Console</div>
+        </div>
+      </div>
 
-            <div class="upload-container">
-                <button id="shareBtn" disabled>Share Model</button>
-            </div>
+      <div class="status-cluster">
+        <div class="stat">
+          <span class="k">Engine</span>
+          <span class="v">model-viewer 3.5</span>
+        </div>
+        <div class="stat">
+          <span class="k">Session</span>
+          <span class="v"><span class="dot"></span><span id="ar-state">Ready</span></span>
+        </div>
+      </div>
+    </header>
 
-            <p id="status" class="status"></p>
+    <!-- ===== MAIN ===== -->
+    <div class="stage-grid">
 
-            <div id="shareBox" class="share-box" hidden>
-                <label for="shareLink">Shareable link:</label>
-                <div class="share-row">
-                    <input type="text" id="shareLink" readonly>
-                    <button id="copyBtn">Copy</button>
-                </div>
+      <!-- Viewport -->
+      <section class="viewport" id="viewport">
+        <div class="floor"></div>
+        <div class="platform-glow"></div>
+
+        <div class="vp-readout">
+          <div>VIEWPORT / <b>PERSPECTIVE</b></div>
+          <div id="readout-name">SRC · sample.glb</div>
+          <div id="readout-dim">BBOX · — × — × —</div>
+        </div>
+
+        <span class="bracket tl"></span>
+        <span class="bracket tr"></span>
+        <span class="bracket bl"></span>
+        <span class="bracket br"></span>
+
+        <model-viewer
+          id="mv"
+          src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
+          ios-src=""
+          alt="3D model"
+          camera-controls
+          auto-rotate
+          auto-rotate-delay="600"
+          rotation-per-second="18deg"
+          shadow-intensity="1.1"
+          exposure="1.05"
+          tone-mapping="neutral"
+          environment-image="neutral"
+          ar
+          ar-modes="webxr scene-viewer quick-look"
+          interaction-prompt="none">
+
+          <div class="empty-state hidden" id="empty" slot="poster">
+            <div>
+              <div class="ring">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
+                  <path d="M12 3 L20 7.5 V16.5 L12 21 L4 16.5 V7.5 Z"/><path d="M4 7.5 L12 12 L20 7.5 M12 12 V21"/>
+                </svg>
+              </div>
+              <p>Drop a model to begin</p>
             </div>
-        </main>
+          </div>
+
+          <button class="ar-btn" slot="ar-button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+            </svg>
+            View in AR
+          </button>
+        </model-viewer>
+      </section>
+
+      <!-- Control rail -->
+      <aside class="rail">
+        <div class="rail-label">Source Inputs</div>
+
+        <!-- GLB -->
+        <label class="slot" id="slot-glb">
+          <input type="file" id="glb-input" accept=".glb,model/gltf-binary" />
+          <div class="slot-top">
+            <span class="slot-fmt">GLB Model</span>
+            <span class="slot-tag">Android · Web</span>
+          </div>
+          <div class="slot-desc">Binary glTF for live preview & Scene Viewer AR.</div>
+          <div class="slot-file" id="glb-file"></div>
+        </label>
+
+        <!-- USDZ -->
+        <label class="slot" id="slot-usdz">
+          <input type="file" id="usdz-input" accept=".usdz,model/vnd.usdz+zip" />
+          <div class="slot-top">
+            <span class="slot-fmt">USDZ Model</span>
+            <span class="slot-tag">iOS · Quick Look</span>
+          </div>
+          <div class="slot-desc">Universal Scene Description for Apple AR Quick Look.</div>
+          <div class="slot-file" id="usdz-file"></div>
+        </label>
+
+        <button class="share-btn" id="share-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>
+          </svg>
+          Share Model
+        </button>
+
+        <div class="specs">
+          <div class="row"><span class="k">GLB Source</span><span class="v" id="spec-glb">sample</span></div>
+          <div class="row"><span class="k">USDZ Source</span><span class="v" id="spec-usdz">none</span></div>
+          <div class="row"><span class="k">AR Support</span><span class="v ok" id="spec-ar">detecting…</span></div>
+          <div class="row"><span class="k">Status</span><span class="v ok" id="spec-status">idle</span></div>
+        </div>
+      </aside>
     </div>
-    <script src="scripts.js"></script>
+
+    <!-- ===== FOOTER ===== -->
+    <footer>
+      <span>WebAR Viewer · Spatial Console</span>
+      <span>GLB / USDZ · WebXR Ready</span>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const mv        = document.getElementById('mv');
+  const glbInput  = document.getElementById('glb-input');
+  const usdzInput = document.getElementById('usdz-input');
+  const glbFile   = document.getElementById('glb-file');
+  const usdzFile  = document.getElementById('usdz-file');
+  const slotGlb   = document.getElementById('slot-glb');
+  const slotUsdz  = document.getElementById('slot-usdz');
+  const specGlb   = document.getElementById('spec-glb');
+  const specUsdz  = document.getElementById('spec-usdz');
+  const specAr    = document.getElementById('spec-ar');
+  const specStat  = document.getElementById('spec-status');
+  const arState   = document.getElementById('ar-state');
+  const readName  = document.getElementById('readout-name');
+  const readDim   = document.getElementById('readout-dim');
+  const toast     = document.getElementById('toast');
+
+  const fileIcon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 20l7-7 7 7M12 13V3"/></svg>';
+
+  function showToast(html) {
+    toast.innerHTML = html;
+    toast.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toast.classList.remove('show'), 2600);
+  }
+
+  // --- GLB upload ---
+  glbInput.addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    mv.src = url;
+    glbFile.innerHTML = fileIcon + f.name;
+    slotGlb.classList.add('loaded');
+    specGlb.textContent = (f.size / 1048576).toFixed(2) + ' MB';
+    readName.textContent = 'SRC · ' + f.name;
+    specStat.textContent = 'loading';
+    showToast('GLB loaded · <b>' + f.name + '</b>');
+  });
+
+  // --- USDZ upload ---
+  usdzInput.addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    mv.setAttribute('ios-src', url);
+    usdzFile.innerHTML = fileIcon + f.name;
+    slotUsdz.classList.add('loaded');
+    specUsdz.textContent = (f.size / 1048576).toFixed(2) + ' MB';
+    showToast('USDZ linked · <b>' + f.name + '</b>');
+  });
+
+  // --- model load -> read dimensions ---
+  mv.addEventListener('load', () => {
+    specStat.textContent = 'rendered';
+    try {
+      const d = mv.getDimensions();
+      const cm = v => (v * 100).toFixed(1);
+      readDim.textContent = 'BBOX · ' + cm(d.x) + ' × ' + cm(d.y) + ' × ' + cm(d.z) + ' cm';
+    } catch (_) {}
+  });
+
+  // --- AR availability ---
+  mv.addEventListener('ar-status', e => {
+    const s = e.detail.status;
+    arState.textContent = s === 'session-started' ? 'In AR' : (s === 'failed' ? 'AR failed' : 'Ready');
+  });
+  customElements.whenDefined('model-viewer').then(() => {
+    mv.canActivateAR ? (specAr.textContent = 'available') : (specAr.textContent = 'unsupported', specAr.classList.remove('ok'));
+  });
+
+  // --- Share ---
+  document.getElementById('share-btn').addEventListener('click', async () => {
+    const data = { title: 'WebAR Viewer', text: 'Check out this 3D model in AR', url: location.href };
+    try {
+      if (navigator.share) { await navigator.share(data); }
+      else { await navigator.clipboard.writeText(location.href); showToast('Link copied to clipboard'); }
+    } catch (_) { showToast('Share cancelled'); }
+  });
+
+  // --- Drag & drop onto viewport ---
+  const vp = document.getElementById('viewport');
+  ['dragover','dragenter'].forEach(ev => vp.addEventListener(ev, e => { e.preventDefault(); vp.style.borderColor = 'rgba(255,93,46,.6)'; }));
+  ['dragleave','drop'].forEach(ev => vp.addEventListener(ev, e => { e.preventDefault(); vp.style.borderColor = ''; }));
+  vp.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    if (/\.glb$/i.test(f.name)) { const dt = new DataTransfer(); dt.items.add(f); glbInput.files = dt.files; glbInput.dispatchEvent(new Event('change')); }
+    else if (/\.usdz$/i.test(f.name)) { const dt = new DataTransfer(); dt.items.add(f); usdzInput.files = dt.files; usdzInput.dispatchEvent(new Event('change')); }
+    else showToast('Unsupported file · use .glb or .usdz');
+  });
+</script>
 </body>
 </html>
