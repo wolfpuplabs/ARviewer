@@ -16,13 +16,17 @@ const shareBox = document.getElementById('shareBox');
 const shareLink = document.getElementById('shareLink');
 const copyBtn = document.getElementById('copyBtn');
 
+// UI specific labels
+const glbFileText = document.getElementById('glbFileText');
+const usdzFileText = document.getElementById('usdzFileText');
+
 // Selected files (kept until user shares)
 let glbFile = null;
 let usdzFile = null;
 
 function setStatus(msg, isError = false) {
   statusEl.textContent = msg || '';
-  statusEl.style.color = isError ? '#c0392b' : '#555';
+  statusEl.style.color = isError ? 'var(--error-color)' : 'var(--text-muted)';
 }
 
 function refreshShareButton() {
@@ -34,8 +38,10 @@ glbUpload.addEventListener('change', function (event) {
   const file = event.target.files[0];
   if (file && (file.name.endsWith('.glb') || file.name.endsWith('.gltf'))) {
     glbFile = file;
+    glbFileText.textContent = file.name; // Update UI text
+    glbFileText.style.color = 'var(--success-color)';
     modelViewer.setAttribute('src', URL.createObjectURL(file));
-    setStatus('GLB ready. Add a USDZ too if you want iOS AR, then click Share.');
+    setStatus('GLB ready. Add a USDZ too if you want iOS AR, then click Generate Share Link.');
   } else if (file) {
     alert('Please upload a .glb or .gltf file.');
   }
@@ -46,8 +52,10 @@ usdzUpload.addEventListener('change', function (event) {
   const file = event.target.files[0];
   if (file && file.name.endsWith('.usdz')) {
     usdzFile = file;
+    usdzFileText.textContent = file.name; // Update UI text
+    usdzFileText.style.color = 'var(--success-color)';
     modelViewer.setAttribute('ios-src', URL.createObjectURL(file));
-    setStatus('USDZ ready. Click Share to generate a link.');
+    setStatus('USDZ ready. Click Generate Share Link.');
   } else if (file) {
     alert('Please upload a .usdz file.');
   }
